@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/olirafa/btrfs-local-csi
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      BTRFS_TEST_MNT: /mnt/btrfs-local-csi-test
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - name: Provision loopback btrfs pool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y btrfs-progs
+          sudo hack/btrfs-loop.sh up
+
+      - name: Verify pool is btrfs with quotas enabled
+        run: |
+          findmnt -no FSTYPE "$BTRFS_TEST_MNT" | grep -qx btrfs
+          sudo btrfs qgroup show "$BTRFS_TEST_MNT"
+
+      # btrfs subvolume and qgroup ioctls need CAP_SYS_ADMIN, so the suite runs
+      # as root against the loopback pool.
+      - name: Test
+        run: sudo -E env "PATH=$PATH" go test ./... -race -count=1
+        env:
+          BTRFS_TEST_POOL: /mnt/btrfs-local-csi-test/pool
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=long
+
+      # Always builds, so a broken Dockerfile fails the PR; only pushes on main
+      # and tags.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
