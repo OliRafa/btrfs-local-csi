@@ -54,8 +54,15 @@ a bound PV.
 
 ## Status
 
-Early. Identity service, btrfs wrappers and volume-path resolution are in place;
-controller and node services are in progress.
+Provisioning, deletion, publishing, online expansion and qgroup-backed stats
+work, and the upstream `csi-sanity` conformance suite passes.
+
+Still to come: per-PVC uid/gid/mode and name overrides read from PVC
+annotations (needs a Kubernetes client), the quota-state file the `LD_PRELOAD`
+interposer consumes, and the deployment manifests.
+
+`csi-test` v5.5.0 does not build against csi spec v1.13.0, which dropped
+`VOLUME_CONDITION`, so the spec is pinned to v1.12.0.
 
 ## Development
 

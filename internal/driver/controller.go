@@ -85,6 +85,11 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	own, err := ownershipFrom(req.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	capacity := requestedCapacity(req.GetCapacityRange())
 
 	// Volume names are human-readable rather than UUIDs, so a directory may
@@ -145,6 +150,9 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 			return nil, unwind(err)
 		}
 	}
+	if err := own.apply(path); err != nil {
+		return nil, unwind(err)
+	}
 	if err := writeClaim(path, claim); err != nil {
 		return nil, unwind(err)
 	}
@@ -198,10 +206,50 @@ func (c *controller) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
+// ControllerExpandVolume moves the qgroup limit. There is no filesystem to
+// grow, because the quota is the size, so expansion takes effect the moment the
+// limit changes: no remount, no node-side step, no pod restart.
+func (c *controller) ControllerExpandVolume(ctx context.Context, req *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
+	handle := req.GetVolumeId()
+	if handle == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	capacity := requestedCapacity(req.GetCapacityRange())
+	if capacity <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "capacity range is required")
+	}
+
+	path, err := ResolvedVolumePath(c.pool, handle)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "volume %q does not exist", handle)
+	}
+
+	usage, err := btrfs.QuotaUsage(ctx, path)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	if usage.Limit > capacity {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"cannot shrink volume %q from %d to %d", handle, usage.Limit, capacity)
+	}
+	if usage.Limit != capacity {
+		if err := btrfs.SetQuota(ctx, path, capacity); err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		slog.Info("expanded volume", "volume", handle, "from", usage.Limit, "to", capacity)
+	}
+
+	return &csi.ControllerExpandVolumeResponse{
+		CapacityBytes:         capacity,
+		NodeExpansionRequired: false,
+	}, nil
+}
+
 func (c *controller) ControllerGetCapabilities(context.Context, *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: []*csi.ControllerServiceCapability{
 			rpcCapability(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME),
+			rpcCapability(csi.ControllerServiceCapability_RPC_EXPAND_VOLUME),
 		},
 	}, nil
 }
