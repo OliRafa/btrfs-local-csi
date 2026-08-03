@@ -30,6 +30,30 @@ var segmentPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
 const maxSegmentLen = 253
 
+// fallbackNamespace holds volumes provisioned without PVC metadata, which under
+// Kubernetes means csi-provisioner is running without --extra-create-metadata.
+const fallbackNamespace = "unnamespaced"
+
+// sanitizeSegment coerces an arbitrary CSI volume name into a valid segment, for
+// the fallback path where there is no PVC name to use instead.
+func sanitizeSegment(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+
+	out := strings.Trim(b.String(), "-.")
+	if len(out) > maxSegmentLen {
+		out = strings.Trim(out[:maxSegmentLen], "-.")
+	}
+	return out
+}
+
 // ResolveHandle builds the volume handle for a claim.
 //
 // The handle doubles as the volume's path relative to the pool. That is

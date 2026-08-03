@@ -3,7 +3,6 @@ package driver
 import (
 	"bufio"
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -38,11 +37,8 @@ func (n *node) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolume
 	}
 
 	source, err := ResolvedVolumePath(n.pool, handle)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume %q does not exist", handle)
-	case err != nil:
-		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	isSubvolume, err := btrfs.IsSubvolume(source)
@@ -125,11 +121,8 @@ func (n *node) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeSta
 	}
 
 	source, err := ResolvedVolumePath(n.pool, handle)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume %q does not exist", handle)
-	case err != nil:
-		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	usage, err := btrfs.QuotaUsage(ctx, source)

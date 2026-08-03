@@ -67,9 +67,13 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 	namespace := req.GetParameters()[paramPVCNamespace]
 	pvcName := req.GetParameters()[paramPVCName]
 	if namespace == "" || pvcName == "" {
-		return nil, status.Errorf(codes.InvalidArgument,
-			"missing %q and %q parameters; csi-provisioner must run with --extra-create-metadata",
-			paramPVCNamespace, paramPVCName)
+		// CSI is not Kubernetes-specific, so CreateVolume has to work from the
+		// request name alone. Under Kubernetes this branch means csi-provisioner
+		// is missing --extra-create-metadata, and volumes land under the
+		// generated pvc-<uuid> name rather than a readable one.
+		slog.Warn("provisioning without PVC metadata; add --extra-create-metadata to csi-provisioner for readable paths",
+			"name", claim)
+		namespace, pvcName = fallbackNamespace, sanitizeSegment(claim)
 	}
 
 	handle, err := ResolveHandle(namespace, pvcName, "")
@@ -88,7 +92,19 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 	// the two cases apart.
 	switch existing, err := readClaim(path); {
 	case err == nil && existing == claim:
-		return createResponse(handle, capacity, c.nodeID), nil
+		// A retry, unless the request changed size — the spec wants
+		// ALREADY_EXISTS when the same name is asked for at a different
+		// capacity.
+		usage, err := btrfs.QuotaUsage(ctx, path)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+		if capacity > 0 && usage.Limit != capacity {
+			return nil, status.Errorf(codes.AlreadyExists,
+				"volume %q already exists with capacity %d, cannot satisfy a request for %d",
+				handle, usage.Limit, capacity)
+		}
+		return createResponse(handle, usage.Limit, c.nodeID), nil
 	case err == nil:
 		return nil, status.Errorf(codes.AlreadyExists,
 			"%s already holds volume %q, refusing to reuse it for %q", path, existing, claim)
@@ -143,12 +159,13 @@ func (c *controller) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
 
+	// The spec requires DeleteVolume to succeed for a volume that does not
+	// exist, and a handle that cannot even be parsed names a volume that cannot
+	// exist. Returning OK here is safe precisely because it does nothing.
 	path, err := ResolvedVolumePath(c.pool, handle)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	if err != nil {
+		slog.Warn("delete requested for an unresolvable volume, ignoring", "volume", handle, "err", err)
 		return &csi.DeleteVolumeResponse{}, nil
-	case err != nil:
-		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	// The last guard before data goes away: whatever the handle resolved to has
@@ -199,11 +216,8 @@ func (c *controller) ValidateVolumeCapabilities(ctx context.Context, req *csi.Va
 	}
 
 	path, err := ResolvedVolumePath(c.pool, handle)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume %q does not exist", handle)
-	case err != nil:
-		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if _, err := readClaim(path); err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume %q does not exist", handle)

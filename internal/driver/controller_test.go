@@ -175,15 +175,35 @@ func TestCreateVolumeRefusesUnstampedDirectory(t *testing.T) {
 	}
 }
 
-func TestCreateVolumeRequiresExtraCreateMetadata(t *testing.T) {
+// CSI is not Kubernetes-specific, so CreateVolume has to work from the request
+// name alone. The volume lands under the fallback namespace, which is the
+// visible signal that csi-provisioner is missing --extra-create-metadata.
+func TestCreateVolumeWithoutPVCMetadataFallsBack(t *testing.T) {
 	ctx, c := newController(t, DeletionRename)
 
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
 	req.Parameters = nil
 
-	_, err := c.CreateVolume(ctx, req)
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("CreateVolume without pvc metadata = %v, want InvalidArgument", err)
+	resp, err := c.CreateVolume(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	if got, want := resp.GetVolume().GetVolumeId(), fallbackNamespace+"/pvc-abc"; got != want {
+		t.Errorf("volume id = %q, want %q", got, want)
+	}
+}
+
+// The same claim asked for at a different size is a conflict, not a retry.
+func TestCreateVolumeRejectsCapacityChange(t *testing.T) {
+	ctx, c := newController(t, DeletionRename)
+
+	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20)); err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	_, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 64<<20))
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("CreateVolume at a different capacity = %v, want AlreadyExists", err)
 	}
 }
 
@@ -265,12 +285,26 @@ func TestDeleteVolumeRefusesPlainDirectory(t *testing.T) {
 	}
 }
 
-func TestDeleteVolumeRejectsTraversingHandle(t *testing.T) {
+// A traversing handle has to be a no-op rather than an error, because the spec
+// requires DeleteVolume to succeed for volumes that do not exist. What matters
+// is that nothing outside the pool is touched.
+func TestDeleteVolumeIgnoresTraversingHandle(t *testing.T) {
 	ctx, c := newController(t, DeletionDelete)
 
-	_, err := c.DeleteVolume(ctx, &csi.DeleteVolumeRequest{VolumeId: "../../etc"})
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("DeleteVolume with a traversing handle = %v, want InvalidArgument", err)
+	outside := filepath.Join(t.TempDir(), "precious")
+	if err := os.WriteFile(outside, []byte("do not delete"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	traversing, err := filepath.Rel(c.pool, outside)
+	if err != nil {
+		t.Fatalf("build traversing handle: %v", err)
+	}
+
+	if _, err := c.DeleteVolume(ctx, &csi.DeleteVolumeRequest{VolumeId: traversing}); err != nil {
+		t.Fatalf("DeleteVolume with a traversing handle = %v, want success", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("a file outside the pool was touched: %v", err)
 	}
 }
 
