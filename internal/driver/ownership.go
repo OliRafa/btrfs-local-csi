@@ -16,6 +16,35 @@ const (
 	paramMode = "mode"
 )
 
+// PVC annotations overriding the StorageClass parameters above.
+const (
+	UIDAnnotation  = "btrfs-local-csi/uid"
+	GIDAnnotation  = "btrfs-local-csi/gid"
+	ModeAnnotation = "btrfs-local-csi/mode"
+)
+
+// ownershipParams layers a claim's annotations over its StorageClass
+// parameters, so a PVC can opt out of the class-wide default without needing a
+// StorageClass of its own.
+func ownershipParams(params, annotations map[string]string) map[string]string {
+	merged := make(map[string]string, 3)
+	for _, key := range []string{paramUID, paramGID, paramMode} {
+		if value, ok := params[key]; ok {
+			merged[key] = value
+		}
+	}
+	for annotation, key := range map[string]string{
+		UIDAnnotation:  paramUID,
+		GIDAnnotation:  paramGID,
+		ModeAnnotation: paramMode,
+	} {
+		if value, ok := annotations[annotation]; ok {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
 // ownership is unset by default, leaving whatever btrfs created.
 type ownership struct {
 	uid, gid int

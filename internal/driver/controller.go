@@ -46,12 +46,19 @@ func ParseDeletionMode(s string) (DeletionMode, error) {
 	}
 }
 
+// ClaimLookup reads the annotations of a PersistentVolumeClaim. It is an
+// interface so the driver can run outside a cluster, where it is simply nil.
+type ClaimLookup interface {
+	Annotations(ctx context.Context, namespace, name string) (map[string]string, error)
+}
+
 type controller struct {
 	csi.UnimplementedControllerServer
 	pool         string
 	nodeID       string
 	compression  string
 	deletionMode DeletionMode
+	claims       ClaimLookup
 	now          func() time.Time
 }
 
@@ -66,7 +73,8 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 
 	namespace := req.GetParameters()[paramPVCNamespace]
 	pvcName := req.GetParameters()[paramPVCName]
-	if namespace == "" || pvcName == "" {
+	fromKubernetes := namespace != "" && pvcName != ""
+	if !fromKubernetes {
 		// CSI is not Kubernetes-specific, so CreateVolume has to work from the
 		// request name alone. Under Kubernetes this branch means csi-provisioner
 		// is missing --extra-create-metadata, and volumes land under the
@@ -76,7 +84,20 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 		namespace, pvcName = fallbackNamespace, sanitizeSegment(claim)
 	}
 
-	handle, err := ResolveHandle(namespace, pvcName, "")
+	// Annotations are the claim's own say over the name and ownership its
+	// StorageClass would otherwise dictate.
+	var (
+		annotations map[string]string
+		err         error
+	)
+	if fromKubernetes && c.claims != nil {
+		annotations, err = c.claims.Annotations(ctx, namespace, pvcName)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+	}
+
+	handle, err := ResolveHandle(namespace, pvcName, annotations[NameAnnotation])
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -85,7 +106,7 @@ func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	own, err := ownershipFrom(req.GetParameters())
+	own, err := ownershipFrom(ownershipParams(req.GetParameters(), annotations))
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}

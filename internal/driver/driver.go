@@ -29,6 +29,8 @@ type Config struct {
 	Version      string
 	Compression  string
 	DeletionMode DeletionMode
+	// Claims is optional; without it the driver ignores per-PVC annotations.
+	Claims ClaimLookup
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -51,6 +53,7 @@ func Run(ctx context.Context, cfg Config) error {
 		nodeID:       cfg.NodeID,
 		compression:  cfg.Compression,
 		deletionMode: cfg.DeletionMode,
+		claims:       cfg.Claims,
 		now:          time.Now,
 	})
 	csi.RegisterNodeServer(srv, &node{pool: cfg.Pool, nodeID: cfg.NodeID})

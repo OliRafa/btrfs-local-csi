@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/OliRafa/btrfs-local-csi/internal/driver"
+	"github.com/OliRafa/btrfs-local-csi/internal/kube"
 )
 
 // version is stamped at build time with -ldflags "-X main.version=...".
@@ -43,6 +44,19 @@ func main() {
 		os.Exit(2)
 	}
 	cfg.DeletionMode = mode
+
+	// Outside a cluster the client is nil and per-PVC annotations are simply
+	// ignored; the driver still provisions.
+	claims, err := kube.NewInCluster()
+	if err != nil {
+		slog.Error("could not reach the Kubernetes API", "err", err)
+		os.Exit(1)
+	}
+	if claims != nil {
+		cfg.Claims = claims
+	} else {
+		slog.Warn("not running in a cluster; per-PVC annotation overrides are disabled")
+	}
 
 	if debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
