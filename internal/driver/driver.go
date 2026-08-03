@@ -53,6 +53,7 @@ func Run(ctx context.Context, cfg Config) error {
 		deletionMode: cfg.DeletionMode,
 		now:          time.Now,
 	})
+	csi.RegisterNodeServer(srv, &node{pool: cfg.Pool, nodeID: cfg.NodeID})
 
 	go func() {
 		<-ctx.Done()
