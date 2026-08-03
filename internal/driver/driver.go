@@ -5,11 +5,13 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
@@ -22,11 +24,21 @@ const Name = "btrfs-local-csi"
 type Config struct {
 	Endpoint string
 	NodeID   string
-	Pool     string
-	Version  string
+	// Pool is the btrfs directory volumes are provisioned under.
+	Pool         string
+	Version      string
+	Compression  string
+	DeletionMode DeletionMode
 }
 
 func Run(ctx context.Context, cfg Config) error {
+	if cfg.Pool == "" {
+		return errors.New("a pool directory is required")
+	}
+	if cfg.DeletionMode == "" {
+		cfg.DeletionMode = DeletionRename
+	}
+
 	lis, err := listen(cfg.Endpoint)
 	if err != nil {
 		return err
@@ -34,6 +46,13 @@ func Run(ctx context.Context, cfg Config) error {
 
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(logRPC))
 	csi.RegisterIdentityServer(srv, identity{version: cfg.Version})
+	csi.RegisterControllerServer(srv, &controller{
+		pool:         cfg.Pool,
+		nodeID:       cfg.NodeID,
+		compression:  cfg.Compression,
+		deletionMode: cfg.DeletionMode,
+		now:          time.Now,
+	})
 
 	go func() {
 		<-ctx.Done()

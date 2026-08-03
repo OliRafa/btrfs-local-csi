@@ -16,7 +16,9 @@ func TestServesIdentityOverUnixSocket(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- Run(ctx, Config{Endpoint: endpoint, NodeID: "test-node", Version: "v0.0.0-test"}) }()
+	go func() {
+		served <- Run(ctx, Config{Endpoint: endpoint, NodeID: "test-node", Pool: t.TempDir(), Version: "v0.0.0-test"})
+	}()
 	t.Cleanup(func() {
 		cancel()
 		if err := <-served; err != nil {

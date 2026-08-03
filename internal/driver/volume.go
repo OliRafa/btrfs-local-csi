@@ -1,11 +1,15 @@
 package driver
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // NameAnnotation lets a PVC choose its on-disk directory name. Only the leaf is
@@ -100,6 +104,40 @@ func ResolvedVolumePath(pool, handle string) (string, error) {
 func TrashPath(pool, handle string, at time.Time) string {
 	name := strings.ReplaceAll(handle, "/", "-") + "-" + at.UTC().Format("20060102T150405Z")
 	return filepath.Join(pool, trashDir, name)
+}
+
+// claimXattr records which CSI volume a directory belongs to.
+const claimXattr = "user.btrfs-local-csi.claim"
+
+// errNoClaim reports a directory that exists but carries no stamp, meaning this
+// driver did not create it.
+var errNoClaim = errors.New("directory carries no claim stamp")
+
+// readClaim returns the CSI volume name stamped on a volume directory.
+//
+// The stamp is what makes human-readable paths safe. Names are no longer UUIDs,
+// so a PVC deleted under a Retain policy and later recreated with the same name
+// resolves to a directory that still holds the previous volume's data. Without
+// the stamp the driver would silently hand it over.
+func readClaim(path string) (string, error) {
+	buf := make([]byte, 512)
+	n, err := unix.Getxattr(path, claimXattr, buf)
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		return "", fmt.Errorf("stat %q: %w", path, os.ErrNotExist)
+	case errors.Is(err, unix.ENODATA):
+		return "", errNoClaim
+	case err != nil:
+		return "", fmt.Errorf("read claim stamp on %q: %w", path, err)
+	}
+	return string(buf[:n]), nil
+}
+
+func writeClaim(path, claim string) error {
+	if err := unix.Setxattr(path, claimXattr, []byte(claim), 0); err != nil {
+		return fmt.Errorf("stamp claim on %q: %w", path, err)
+	}
+	return nil
 }
 
 func validateSegment(kind, s string) error {
