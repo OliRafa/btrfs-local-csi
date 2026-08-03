@@ -20,7 +20,7 @@ annotations — so per-volume ownership cannot be expressed.
 | Aspect | Behaviour |
 |---|---|
 | Transport | `mount --bind`, no NFS |
-| Layout | `<pool>/<namespace>/<pvc-name>/data`, overridable per PVC |
+| Layout | `<pool>/<namespace>/<pvc-name>`, leaf overridable per PVC |
 | `volumeHandle` | The relative path itself, so Delete and Publish need no API read |
 | Quota | btrfs qgroup `max_referenced` = requested size |
 | Expansion | `btrfs qgroup limit`; online, no pod restart |
@@ -38,9 +38,24 @@ upstream fix — the gap has been documented since 2016.
 The driver therefore publishes each volume's qgroup numbers as JSON on the node,
 for an `LD_PRELOAD` interposer to feed to applications that care.
 
+### Naming
+
+A volume lives at `<pool>/<namespace>/<name>`, where `name` defaults to the PVC
+name and can be overridden with the `btrfs-local-csi/name` annotation. Only the
+leaf is configurable — the namespace prefix is always the claim's own, so a PVC
+can never address another namespace's storage, and two same-named PVCs in
+different namespaces cannot collide.
+
+The handle *is* that relative path, because `DeleteVolume` and
+`NodePublishVolume` have to locate a volume without reading the PVC, which by
+deletion time no longer exists. The name is therefore fixed at provisioning:
+editing the annotation later does nothing, since `volumeHandle` is immutable on
+a bound PV.
+
 ## Status
 
-Early. Identity service only; controller and node services are in progress.
+Early. Identity service, btrfs wrappers and volume-path resolution are in place;
+controller and node services are in progress.
 
 ## Development
 
