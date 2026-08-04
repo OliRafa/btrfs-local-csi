@@ -54,12 +54,13 @@ a bound PV.
 
 ## Status
 
-Provisioning, deletion, publishing, online expansion and qgroup-backed stats
-work, and the upstream `csi-sanity` conformance suite passes.
+Feature-complete for its first deployment. Provisioning, deletion, publishing,
+online expansion, per-PVC ownership and name overrides, qgroup-backed stats and
+the published quota state all work, and the upstream `csi-sanity` conformance
+suite passes.
 
-Still to come: per-PVC uid/gid/mode and name overrides read from PVC
-annotations (needs a Kubernetes client), the quota-state file the `LD_PRELOAD`
-interposer consumes, and the deployment manifests.
+Still to come: the prebuilt `LD_PRELOAD` interposer image, and the deployment
+manifests.
 
 `csi-test` v5.5.0 does not build against csi spec v1.13.0, which dropped
 `VOLUME_CONDITION`, so the spec is pinned to v1.12.0.
