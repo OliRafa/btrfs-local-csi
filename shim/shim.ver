@@ -1,0 +1,23 @@
+/*
+ * Linker version script: mark all exported functions as the default
+ * version of GLIBC_2.2.5. With @@VERSION, the dynamic symbol table holds
+ * both the versioned form (statfs64@GLIBC_2.2.5) and the unversioned
+ * (statfs64). .NET 10's libSystem.Native.so imports statfs64@GLIBC_2.2.5
+ * — without this versioning, observed behaviour on Ubuntu 24.04 was that
+ * .NET's import bypassed our unversioned shim entirely.
+ *
+ * Used only by the glibc build (Torrentarr). musl builds (qBittorrent)
+ * skip this file — musl doesn't use symbol versioning.
+ *
+ * GLIBC_2.2.5 is the x86_64 baseline specifically. Other architectures
+ * start elsewhere — aarch64's is GLIBC_2.17 — and a mismatch here is
+ * silent: the shim loads, its exports satisfy nobody's import, and every
+ * call falls through to libc. Hence the amd64-only build.
+ */
+GLIBC_2.2.5 {
+    global:
+        statvfs;
+        statvfs64;
+        statfs;
+        statfs64;
+};

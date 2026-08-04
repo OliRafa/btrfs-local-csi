@@ -36,7 +36,32 @@ volume's quota. This is true of bind mounts and NFS alike, and there is no
 upstream fix — the gap has been documented since 2016.
 
 The driver therefore publishes each volume's qgroup numbers as JSON on the node,
-for an `LD_PRELOAD` interposer to feed to applications that care.
+at `<quota-state-dir>/<namespace>/<name>.json`, and ships an `LD_PRELOAD`
+interposer that answers `statvfs` and `statfs` from them.
+
+### The interposer
+
+`shim/` builds `ghcr.io/olirafa/btrfs-local-csi-shim`, holding a prebuilt
+`libqgroup_fence.so` for each libc:
+
+| | |
+|---|---|
+| `/preload/glibc/` | Built with `shim.ver`, exporting each symbol as `@@GLIBC_2.2.5`, because .NET imports `statfs64@GLIBC_2.2.5` and an unversioned export does not satisfy it |
+| `/preload/musl/` | No version script, no `*64` entry points — musl has neither |
+
+Pods copy the matching variant out of this image in an initContainer, set
+`LD_PRELOAD`, `QGROUP_FENCE_PATHS` and `QGROUP_FENCE_JSON`, and mount the
+driver's quota-state directory read-only. Prebuilding replaces an initContainer
+that compiled the shim from source on every pod start.
+
+Both variants are exercised against a real filesystem during the image build,
+because every way this can break is silent — a shim that loads but intercepts
+nothing just reports pool free space, which is the bug it exists to fix. The
+build also asserts the glibc symbol versions are present and that the object
+needs no glibc newer than 2.34.
+
+The image is amd64 only: `GLIBC_2.2.5` is the x86_64 baseline and does not
+exist on other architectures, where the exports would satisfy no import at all.
 
 ### Naming
 
@@ -56,11 +81,10 @@ a bound PV.
 
 Feature-complete for its first deployment. Provisioning, deletion, publishing,
 online expansion, per-PVC ownership and name overrides, qgroup-backed stats and
-the published quota state all work, and the upstream `csi-sanity` conformance
-suite passes.
+the published quota state all work, the interposer ships prebuilt, and the
+upstream `csi-sanity` conformance suite passes.
 
-Still to come: the prebuilt `LD_PRELOAD` interposer image, and the deployment
-manifests.
+Still to come: the deployment manifests.
 
 `csi-test` v5.5.0 does not build against csi spec v1.13.0, which dropped
 `VOLUME_CONDITION`, so the spec is pinned to v1.12.0.
