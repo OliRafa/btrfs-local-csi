@@ -76,6 +76,10 @@ func mountCapability() *csi.VolumeCapability {
 	}
 }
 
+func deleteRequest(handle string) *csi.DeleteVolumeRequest {
+	return &csi.DeleteVolumeRequest{VolumeId: handle}
+}
+
 func createRequest(claim, namespace, pvcName string, capacity int64) *csi.CreateVolumeRequest {
 	return &csi.CreateVolumeRequest{
 		Name:               claim,

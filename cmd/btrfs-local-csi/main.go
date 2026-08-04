@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/OliRafa/btrfs-local-csi/internal/driver"
 	"github.com/OliRafa/btrfs-local-csi/internal/kube"
@@ -29,6 +30,10 @@ func main() {
 	flag.StringVar(&cfg.Compression, "compression", "zstd", "btrfs compression to set on new volumes, or empty to leave unset")
 	flag.StringVar(&deletionMode, "deletion-mode", string(driver.DeletionRename),
 		`What DeleteVolume does: "rename" moves the volume into <pool>/.trash, "delete" destroys it`)
+	flag.StringVar(&cfg.QuotaStateDir, "quota-state-dir", "",
+		"Directory to publish per-volume qgroup numbers into for the LD_PRELOAD interposer, or empty to disable")
+	flag.DurationVar(&cfg.QuotaStateInterval, "quota-state-interval", 30*time.Second,
+		"How often to refresh the published quota state")
 	flag.BoolVar(&showVersion, "version", false, "Print the version and exit")
 	flag.BoolVar(&debug, "debug", false, "Log every served RPC")
 	flag.Parse()

@@ -31,6 +31,10 @@ type Config struct {
 	DeletionMode DeletionMode
 	// Claims is optional; without it the driver ignores per-PVC annotations.
 	Claims ClaimLookup
+	// QuotaStateDir, when set, is where per-volume qgroup numbers are published
+	// for the LD_PRELOAD interposer to read.
+	QuotaStateDir      string
+	QuotaStateInterval time.Duration
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -57,6 +61,12 @@ func Run(ctx context.Context, cfg Config) error {
 		now:          time.Now,
 	})
 	csi.RegisterNodeServer(srv, &node{pool: cfg.Pool, nodeID: cfg.NodeID})
+
+	if cfg.QuotaStateDir != "" {
+		state := &quotaState{pool: cfg.Pool, dir: cfg.QuotaStateDir, interval: cfg.QuotaStateInterval}
+		go state.run(ctx)
+		slog.Info("publishing quota state", "dir", cfg.QuotaStateDir, "interval", cfg.QuotaStateInterval)
+	}
 
 	go func() {
 		<-ctx.Done()
