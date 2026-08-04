@@ -266,6 +266,37 @@ func TestDeleteVolumeLeavesNothingBehind(t *testing.T) {
 	}
 }
 
+// The namespace directory has to outlive every volume but the last. Removing it
+// while siblings remain would strand them; never removing it leaves an empty
+// directory in the pool for every namespace that has ever held a volume.
+func TestDeleteVolumeRemovesNamespaceDirectoryOnlyWhenEmpty(t *testing.T) {
+	ctx, c := newController(t)
+
+	for _, name := range []string{"library", "downloads"} {
+		if _, err := c.CreateVolume(ctx, createRequest("pvc-"+name, "localflix", name, 32<<20)); err != nil {
+			t.Fatalf("CreateVolume %s: %v", name, err)
+		}
+	}
+	namespace := filepath.Join(c.pool, "localflix")
+
+	if _, err := c.DeleteVolume(ctx, deleteRequest("localflix/library")); err != nil {
+		t.Fatalf("DeleteVolume: %v", err)
+	}
+	if _, err := os.Stat(namespace); err != nil {
+		t.Fatalf("namespace directory removed while a volume was still in it: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(namespace, "downloads")); err != nil {
+		t.Fatalf("surviving volume lost: %v", err)
+	}
+
+	if _, err := c.DeleteVolume(ctx, deleteRequest("localflix/downloads")); err != nil {
+		t.Fatalf("DeleteVolume: %v", err)
+	}
+	if _, err := os.Stat(namespace); !os.IsNotExist(err) {
+		t.Errorf("empty namespace directory survived the last volume: %v", err)
+	}
+}
+
 func TestDeleteVolumeIsIdempotent(t *testing.T) {
 	ctx, c := newController(t)
 

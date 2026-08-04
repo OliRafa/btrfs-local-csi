@@ -196,6 +196,15 @@ func (c *controller) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 	if err := btrfs.DeleteSubvolume(ctx, path); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
+
+	// The namespace directory is scaffolding the driver put there, not data, so
+	// it goes when its last volume does — otherwise every namespace that ever
+	// held a volume leaves an empty directory in the pool forever. Remove only
+	// unlinks an empty directory, so this fails harmlessly while any sibling
+	// volume remains, which is exactly when we want it to do nothing. A handle
+	// is always <namespace>/<name>, so this can never reach the pool itself.
+	_ = os.Remove(filepath.Dir(path))
+
 	slog.Info("deleted volume", "volume", handle, "path", path)
 	return &csi.DeleteVolumeResponse{}, nil
 }
