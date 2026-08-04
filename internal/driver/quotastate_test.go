@@ -25,7 +25,7 @@ func readVolumeQuota(t *testing.T, path string) volumeQuota {
 }
 
 func TestQuotaStatePublishesPerVolumeFiles(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	const capacity = 64 << 20
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-a", "localflix", "library", capacity)); err != nil {
@@ -57,7 +57,7 @@ func TestQuotaStatePublishesPerVolumeFiles(t *testing.T) {
 // interposer feeds this into statvfs, whose block counts are unsigned, so a
 // negative would wrap into terabytes of imaginary free space.
 func TestQuotaStateClampsOverQuotaVolumes(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-a", "localflix", "library", 32<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
@@ -94,7 +94,7 @@ func TestQuotaStateClampsOverQuotaVolumes(t *testing.T) {
 }
 
 func TestQuotaStateIgnoresUnstampedDirectories(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	stray := filepath.Join(c.pool, "localflix", "not-ours")
 	if err := os.MkdirAll(stray, 0o755); err != nil {
@@ -111,8 +111,8 @@ func TestQuotaStateIgnoresUnstampedDirectories(t *testing.T) {
 	}
 }
 
-func TestQuotaStateSkipsTrash(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+func TestQuotaStateDropsDeletedVolumes(t *testing.T) {
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-a", "localflix", "library", 32<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
@@ -127,6 +127,6 @@ func TestQuotaStateSkipsTrash(t *testing.T) {
 	}
 
 	if entries, err := os.ReadDir(state.dir); err == nil && len(entries) != 0 {
-		t.Errorf("published state for trashed volumes: %v", entries)
+		t.Errorf("published state for deleted volumes: %v", entries)
 	}
 }

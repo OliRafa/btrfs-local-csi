@@ -27,6 +27,14 @@ annotations — so per-volume ownership cannot be expressed.
 | Compression | `btrfs property set … compression zstd` |
 | Ownership | uid/gid/mode from PVC annotations, StorageClass fallback |
 | Stats | `NodeGetVolumeStats` reports qgroup usage, not pool usage |
+| Deletion | `DeleteVolume` destroys the subvolume; retention is the reclaim policy's job |
+
+`DeleteVolume` deliberately has no "move it aside instead" mode. The CO only
+calls it for a PV whose reclaim policy is `Delete`, and reads success as "that
+capacity is free now" — but a volume kept under some other name still holds
+every referenced byte against the pool's qgroups, so the driver would be
+reporting space it had not released. Under `Retain` the call never happens at
+all, which is where keeping data belongs.
 
 ### Quotas are invisible to `statvfs`
 

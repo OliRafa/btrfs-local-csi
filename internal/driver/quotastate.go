@@ -58,7 +58,7 @@ func (q *quotaState) publish(ctx context.Context) error {
 	}
 
 	for _, namespace := range namespaces {
-		// Skips .trash, which is unreachable as a handle for the same reason.
+		// Dot-prefixed entries cannot be namespaces, so nothing here is ours.
 		if !namespace.IsDir() || strings.HasPrefix(namespace.Name(), ".") {
 			continue
 		}

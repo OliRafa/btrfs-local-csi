@@ -57,7 +57,7 @@ func TestOwnershipFrom(t *testing.T) {
 // The setgid bit has to survive: a 2770 volume that comes out 0770 silently
 // breaks group inheritance for files the application creates later.
 func TestCreateVolumeAppliesOwnershipIncludingSetgid(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
 	req.Parameters[paramUID] = "1000"
@@ -81,7 +81,7 @@ func TestCreateVolumeAppliesOwnershipIncludingSetgid(t *testing.T) {
 }
 
 func TestCreateVolumeRejectsBadOwnershipParameters(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
 	req.Parameters[paramUID] = "1000" // no gid
@@ -93,7 +93,7 @@ func TestCreateVolumeRejectsBadOwnershipParameters(t *testing.T) {
 }
 
 func TestControllerExpandVolume(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	const (
 		initial = 32 << 20
@@ -128,7 +128,7 @@ func TestControllerExpandVolume(t *testing.T) {
 }
 
 func TestControllerExpandVolumeRefusesToShrink(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 64<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
@@ -144,7 +144,7 @@ func TestControllerExpandVolumeRefusesToShrink(t *testing.T) {
 }
 
 func TestControllerExpandVolumeRejectsMissingVolume(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	_, err := c.ControllerExpandVolume(ctx, &csi.ControllerExpandVolumeRequest{
 		VolumeId:      "localflix/never-existed",

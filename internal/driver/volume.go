@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -16,11 +15,6 @@ import (
 // configurable: the namespace prefix is always the claim's own, so a PVC in one
 // namespace can never address another namespace's storage.
 const NameAnnotation = "btrfs-local-csi/name"
-
-// trashDir holds volumes removed while the driver runs in rename mode. It is
-// unreachable as a volume handle because the segment pattern rejects a leading
-// dot.
-const trashDir = ".trash"
 
 // segmentPattern matches one path segment. It is the RFC 1123 shape Kubernetes
 // already enforces on namespaces and PVC names, so default handles never need
@@ -122,12 +116,6 @@ func ResolvedVolumePath(pool, handle string) (string, error) {
 		return "", fmt.Errorf("volume %q resolves to %q, which is outside the pool", handle, realPath)
 	}
 	return realPath, nil
-}
-
-// TrashPath is where a volume is moved when the driver deletes in rename mode.
-func TrashPath(pool, handle string, at time.Time) string {
-	name := strings.ReplaceAll(handle, "/", "-") + "-" + at.UTC().Format("20060102T150405Z")
-	return filepath.Join(pool, trashDir, name)
 }
 
 // claimXattr records which CSI volume a directory belongs to.

@@ -22,7 +22,7 @@ func (f fakeClaims) Annotations(context.Context, string, string) (map[string]str
 }
 
 func TestCreateVolumeHonoursNameAnnotation(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	c.claims = fakeClaims{annotations: map[string]string{NameAnnotation: "media"}}
 
 	resp, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "localflix-library", 32<<20))
@@ -40,7 +40,7 @@ func TestCreateVolumeHonoursNameAnnotation(t *testing.T) {
 
 // Only the leaf is overridable, so a claim cannot reach into another namespace.
 func TestCreateVolumeRejectsNameAnnotationEscape(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	c.claims = fakeClaims{annotations: map[string]string{NameAnnotation: "../pirate-bay/loot"}}
 
 	_, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20))
@@ -50,7 +50,7 @@ func TestCreateVolumeRejectsNameAnnotationEscape(t *testing.T) {
 }
 
 func TestAnnotationsOverrideStorageClassOwnership(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	c.claims = fakeClaims{annotations: map[string]string{
 		UIDAnnotation:  "3000",
 		GIDAnnotation:  "3000",
@@ -80,7 +80,7 @@ func TestAnnotationsOverrideStorageClassOwnership(t *testing.T) {
 }
 
 func TestStorageClassOwnershipAppliesWhenAnnotationsAreAbsent(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	c.claims = fakeClaims{annotations: map[string]string{}}
 
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
@@ -103,7 +103,7 @@ func TestStorageClassOwnershipAppliesWhenAnnotationsAreAbsent(t *testing.T) {
 // A failed lookup must not fall back to class defaults: the claim asked for a
 // specific owner and provisioning it wrong leaves a volume the app cannot write.
 func TestCreateVolumeFailsWhenAnnotationLookupFails(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	c.claims = fakeClaims{err: errors.New("api server unreachable")}
 
 	_, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20))

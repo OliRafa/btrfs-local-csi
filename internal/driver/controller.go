@@ -25,27 +25,6 @@ const (
 // TopologyNodeKey pins volumes to the node that holds the pool.
 const TopologyNodeKey = "topology." + Name + "/node"
 
-type DeletionMode string
-
-const (
-	// DeletionRename moves deleted volumes into <pool>/.trash rather than
-	// destroying them, and is the default. Reclaiming space by hand is a much
-	// smaller cost than discovering a bug in DeleteVolume the hard way.
-	DeletionRename DeletionMode = "rename"
-	DeletionDelete DeletionMode = "delete"
-)
-
-func ParseDeletionMode(s string) (DeletionMode, error) {
-	switch DeletionMode(s) {
-	case DeletionRename:
-		return DeletionRename, nil
-	case DeletionDelete:
-		return DeletionDelete, nil
-	default:
-		return "", errors.New(`deletion mode must be "rename" or "delete"`)
-	}
-}
-
 // ClaimLookup reads the annotations of a PersistentVolumeClaim. It is an
 // interface so the driver can run outside a cluster, where it is simply nil.
 type ClaimLookup interface {
@@ -54,12 +33,11 @@ type ClaimLookup interface {
 
 type controller struct {
 	csi.UnimplementedControllerServer
-	pool         string
-	nodeID       string
-	compression  string
-	deletionMode DeletionMode
-	claims       ClaimLookup
-	now          func() time.Time
+	pool        string
+	nodeID      string
+	compression string
+	claims      ClaimLookup
+	now         func() time.Time
 }
 
 func (c *controller) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -208,22 +186,17 @@ func (c *controller) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 			"%s is not a btrfs subvolume, refusing to delete it", path)
 	}
 
-	if c.deletionMode == DeletionDelete {
-		if err := btrfs.DeleteSubvolume(ctx, path); err != nil {
-			return nil, status.Errorf(codes.Internal, "%v", err)
-		}
-		slog.Info("deleted volume", "volume", handle, "path", path)
-		return &csi.DeleteVolumeResponse{}, nil
+	// Destroying the subvolume is the whole contract: the CO only calls this for
+	// a PV whose reclaim policy is Delete, and it takes the reply to mean the
+	// capacity is free again. Keeping the data anyway — under a .trash prefix,
+	// say — would still hold every referenced byte against the pool's qgroups,
+	// so the driver would be reporting space it had not actually released.
+	// Retaining data is the reclaim policy's job, and under Retain this method
+	// is never called at all.
+	if err := btrfs.DeleteSubvolume(ctx, path); err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
-
-	trash := TrashPath(c.pool, handle, c.now())
-	if err := os.MkdirAll(filepath.Dir(trash), 0o700); err != nil {
-		return nil, status.Errorf(codes.Internal, "create trash directory: %v", err)
-	}
-	if err := os.Rename(path, trash); err != nil {
-		return nil, status.Errorf(codes.Internal, "move %s to trash: %v", path, err)
-	}
-	slog.Warn("volume moved to trash rather than deleted", "volume", handle, "trash", trash)
+	slog.Info("deleted volume", "volume", handle, "path", path)
 	return &csi.DeleteVolumeResponse{}, nil
 }
 

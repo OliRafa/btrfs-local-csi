@@ -18,7 +18,7 @@ import (
 func newPublishedVolume(t *testing.T, capacity int64, readonly bool) (context.Context, *node, string, string) {
 	t.Helper()
 
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", capacity)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestNodePublishReadonlyRejectsWrites(t *testing.T) {
 }
 
 func TestNodePublishRejectsMissingVolume(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	n := &node{pool: c.pool, nodeID: "test-node"}
 
 	_, err := n.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
@@ -109,7 +109,7 @@ func TestNodePublishRejectsMissingVolume(t *testing.T) {
 }
 
 func TestNodeUnpublishIsIdempotent(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	n := &node{pool: c.pool, nodeID: "test-node"}
 
 	if _, err := n.NodeUnpublishVolume(ctx, &csi.NodeUnpublishVolumeRequest{
@@ -153,7 +153,7 @@ func TestNodeGetVolumeStatsReportsQuotaNotPool(t *testing.T) {
 }
 
 func TestNodeGetVolumeStatsRejectsMissingVolume(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	n := &node{pool: c.pool, nodeID: "test-node"}
 
 	_, err := n.NodeGetVolumeStats(ctx, &csi.NodeGetVolumeStatsRequest{

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestResolveHandle(t *testing.T) {
@@ -26,7 +25,6 @@ func TestResolveHandle(t *testing.T) {
 		{name: "override cannot be dot", namespace: "localflix", pvcName: "x", override: ".", wantErr: true},
 		{name: "override cannot nest", namespace: "localflix", pvcName: "x", override: "a/b", wantErr: true},
 		{name: "override cannot be absolute", namespace: "localflix", pvcName: "x", override: "/etc/shadow", wantErr: true},
-		{name: "override cannot be the trash dir", namespace: "localflix", pvcName: "x", override: trashDir, wantErr: true},
 		{name: "override cannot be uppercase", namespace: "localflix", pvcName: "x", override: "Media", wantErr: true},
 		{name: "namespace cannot traverse", namespace: "..", pvcName: "x", wantErr: true},
 		{name: "namespace cannot be empty", namespace: "", pvcName: "x", wantErr: true},
@@ -115,14 +113,5 @@ func TestResolvedVolumePathRejectsSymlinkEscape(t *testing.T) {
 	}
 	if want, _ := filepath.EvalSymlinks(honest); got != want {
 		t.Errorf("ResolvedVolumePath = %q, want %q", got, want)
-	}
-}
-
-func TestTrashPathIsFlatAndTimestamped(t *testing.T) {
-	at := time.Date(2026, 8, 3, 22, 45, 1, 0, time.UTC)
-	got := TrashPath("/pool", "localflix/library", at)
-
-	if want := "/pool/.trash/localflix-library-20260803T224501Z"; got != want {
-		t.Errorf("TrashPath = %q, want %q", got, want)
 	}
 }

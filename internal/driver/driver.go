@@ -25,10 +25,9 @@ type Config struct {
 	Endpoint string
 	NodeID   string
 	// Pool is the btrfs directory volumes are provisioned under.
-	Pool         string
-	Version      string
-	Compression  string
-	DeletionMode DeletionMode
+	Pool        string
+	Version     string
+	Compression string
 	// Claims is optional; without it the driver ignores per-PVC annotations.
 	Claims ClaimLookup
 	// QuotaStateDir, when set, is where per-volume qgroup numbers are published
@@ -41,10 +40,6 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Pool == "" {
 		return errors.New("a pool directory is required")
 	}
-	if cfg.DeletionMode == "" {
-		cfg.DeletionMode = DeletionRename
-	}
-
 	lis, err := listen(cfg.Endpoint)
 	if err != nil {
 		return err
@@ -53,12 +48,11 @@ func Run(ctx context.Context, cfg Config) error {
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(logRPC))
 	csi.RegisterIdentityServer(srv, identity{version: cfg.Version})
 	csi.RegisterControllerServer(srv, &controller{
-		pool:         cfg.Pool,
-		nodeID:       cfg.NodeID,
-		compression:  cfg.Compression,
-		deletionMode: cfg.DeletionMode,
-		claims:       cfg.Claims,
-		now:          time.Now,
+		pool:        cfg.Pool,
+		nodeID:      cfg.NodeID,
+		compression: cfg.Compression,
+		claims:      cfg.Claims,
+		now:         time.Now,
 	})
 	csi.RegisterNodeServer(srv, &node{pool: cfg.Pool, nodeID: cfg.NodeID})
 

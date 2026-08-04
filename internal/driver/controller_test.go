@@ -19,7 +19,7 @@ var testClock = func() time.Time { return time.Date(2026, 8, 4, 9, 30, 0, 0, tim
 
 // newController gives each test its own pool inside the loopback filesystem, so
 // they cannot see each other's volumes.
-func newController(t *testing.T, mode DeletionMode) (context.Context, *controller) {
+func newController(t *testing.T) (context.Context, *controller) {
 	t.Helper()
 
 	root := os.Getenv("BTRFS_TEST_POOL")
@@ -34,11 +34,10 @@ func newController(t *testing.T, mode DeletionMode) (context.Context, *controlle
 	t.Cleanup(func() { cleanupPool(t, pool) })
 
 	return t.Context(), &controller{
-		pool:         pool,
-		nodeID:       "test-node",
-		compression:  "zstd",
-		deletionMode: mode,
-		now:          testClock,
+		pool:        pool,
+		nodeID:      "test-node",
+		compression: "zstd",
+		now:         testClock,
 	}
 }
 
@@ -93,7 +92,7 @@ func createRequest(claim, namespace, pvcName string, capacity int64) *csi.Create
 }
 
 func TestCreateVolumeProvisionsSubvolumeWithQuota(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	const capacity = 64 << 20
 	resp, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", capacity))
@@ -132,7 +131,7 @@ func TestCreateVolumeProvisionsSubvolumeWithQuota(t *testing.T) {
 }
 
 func TestCreateVolumeIsIdempotent(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
 
 	first, err := c.CreateVolume(ctx, req)
@@ -153,7 +152,7 @@ func TestCreateVolumeIsIdempotent(t *testing.T) {
 // The case human-readable names introduce: a PVC deleted under Retain and
 // recreated resolves to a directory that still holds the old volume's data.
 func TestCreateVolumeRefusesDirectoryHeldByAnotherClaim(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-first", "localflix", "library", 32<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
@@ -166,7 +165,7 @@ func TestCreateVolumeRefusesDirectoryHeldByAnotherClaim(t *testing.T) {
 }
 
 func TestCreateVolumeRefusesUnstampedDirectory(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	stray := filepath.Join(c.pool, "localflix", "library")
 	if err := os.MkdirAll(stray, 0o755); err != nil {
@@ -183,7 +182,7 @@ func TestCreateVolumeRefusesUnstampedDirectory(t *testing.T) {
 // name alone. The volume lands under the fallback namespace, which is the
 // visible signal that csi-provisioner is missing --extra-create-metadata.
 func TestCreateVolumeWithoutPVCMetadataFallsBack(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
 	req.Parameters = nil
@@ -199,7 +198,7 @@ func TestCreateVolumeWithoutPVCMetadataFallsBack(t *testing.T) {
 
 // The same claim asked for at a different size is a conflict, not a retry.
 func TestCreateVolumeRejectsCapacityChange(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
@@ -212,7 +211,7 @@ func TestCreateVolumeRejectsCapacityChange(t *testing.T) {
 }
 
 func TestCreateVolumeRejectsBlockVolumes(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	req := createRequest("pvc-abc", "localflix", "library", 32<<20)
 	req.VolumeCapabilities = []*csi.VolumeCapability{{
@@ -226,8 +225,13 @@ func TestCreateVolumeRejectsBlockVolumes(t *testing.T) {
 	}
 }
 
-func TestDeleteVolumeMovesToTrash(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+// The CO only calls DeleteVolume for a PV whose reclaim policy is Delete, and
+// takes success to mean the capacity is free again. Keeping the data under some
+// other name would still hold its referenced bytes against the pool's qgroups,
+// so the reply would be a lie. Retaining data is the reclaim policy's job, and
+// under Retain this never runs at all.
+func TestDeleteVolumeLeavesNothingBehind(t *testing.T) {
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)
@@ -240,32 +244,30 @@ func TestDeleteVolumeMovesToTrash(t *testing.T) {
 		t.Errorf("volume still present after delete: %v", err)
 	}
 
-	trash := TrashPath(c.pool, "localflix/library", testClock())
-	if isSubvolume, err := btrfs.IsSubvolume(trash); err != nil || !isSubvolume {
-		t.Fatalf("IsSubvolume(%s) = %v, %v; want the volume preserved in the trash", trash, isSubvolume, err)
+	// Walk the whole pool rather than just checking the original path: a
+	// delete that quietly relocated the volume would pass the check above.
+	var survivors []string
+	err := filepath.WalkDir(c.pool, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && path != c.pool {
+			if _, err := readClaim(path); err == nil {
+				survivors = append(survivors, path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk pool: %v", err)
 	}
-}
-
-func TestDeleteVolumeDestroysInDeleteMode(t *testing.T) {
-	ctx, c := newController(t, DeletionDelete)
-
-	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20)); err != nil {
-		t.Fatalf("CreateVolume: %v", err)
-	}
-	if _, err := c.DeleteVolume(ctx, &csi.DeleteVolumeRequest{VolumeId: "localflix/library"}); err != nil {
-		t.Fatalf("DeleteVolume: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(c.pool, "localflix", "library")); !os.IsNotExist(err) {
-		t.Errorf("volume still present after delete: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(c.pool, trashDir)); !os.IsNotExist(err) {
-		t.Errorf("delete mode should not create a trash directory")
+	if len(survivors) != 0 {
+		t.Errorf("volumes survived the delete: %v", survivors)
 	}
 }
 
 func TestDeleteVolumeIsIdempotent(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	if _, err := c.DeleteVolume(ctx, &csi.DeleteVolumeRequest{VolumeId: "localflix/never-existed"}); err != nil {
 		t.Fatalf("DeleteVolume on a missing volume = %v, want success", err)
@@ -273,7 +275,7 @@ func TestDeleteVolumeIsIdempotent(t *testing.T) {
 }
 
 func TestDeleteVolumeRefusesPlainDirectory(t *testing.T) {
-	ctx, c := newController(t, DeletionDelete)
+	ctx, c := newController(t)
 
 	stray := filepath.Join(c.pool, "localflix", "library")
 	if err := os.MkdirAll(stray, 0o755); err != nil {
@@ -293,7 +295,7 @@ func TestDeleteVolumeRefusesPlainDirectory(t *testing.T) {
 // requires DeleteVolume to succeed for volumes that do not exist. What matters
 // is that nothing outside the pool is touched.
 func TestDeleteVolumeIgnoresTraversingHandle(t *testing.T) {
-	ctx, c := newController(t, DeletionDelete)
+	ctx, c := newController(t)
 
 	outside := filepath.Join(t.TempDir(), "precious")
 	if err := os.WriteFile(outside, []byte("do not delete"), 0o644); err != nil {
@@ -313,7 +315,7 @@ func TestDeleteVolumeIgnoresTraversingHandle(t *testing.T) {
 }
 
 func TestValidateVolumeCapabilities(t *testing.T) {
-	ctx, c := newController(t, DeletionRename)
+	ctx, c := newController(t)
 
 	if _, err := c.CreateVolume(ctx, createRequest("pvc-abc", "localflix", "library", 32<<20)); err != nil {
 		t.Fatalf("CreateVolume: %v", err)

@@ -37,9 +37,6 @@ func TestCSISanity(t *testing.T) {
 			NodeID:   "sanity-node",
 			Pool:     pool,
 			Version:  "v0.0.0-sanity",
-			// Destroy rather than move to trash, so the suite's own cleanup
-			// actually reclaims the pool.
-			DeletionMode: driver.DeletionDelete,
 		})
 	}()
 	t.Cleanup(func() {
