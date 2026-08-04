@@ -111,22 +111,42 @@ func TestQuotaStateIgnoresUnstampedDirectories(t *testing.T) {
 	}
 }
 
-func TestQuotaStateDropsDeletedVolumes(t *testing.T) {
+// A deleted volume's state has to be withdrawn, not merely left unrefreshed.
+// The interposer cannot tell a stale file from a current one, so it would keep
+// serving a dead volume's numbers instead of falling back to the real
+// filesystem — and a volume that was full when it went away would report
+// nothing free, forever.
+func TestQuotaStatePrunesDeletedVolumes(t *testing.T) {
 	ctx, c := newController(t)
 
-	if _, err := c.CreateVolume(ctx, createRequest("pvc-a", "localflix", "library", 32<<20)); err != nil {
-		t.Fatalf("CreateVolume: %v", err)
-	}
-	if _, err := c.DeleteVolume(ctx, deleteRequest("localflix/library")); err != nil {
-		t.Fatalf("DeleteVolume: %v", err)
+	for _, name := range []string{"library", "comics"} {
+		if _, err := c.CreateVolume(ctx, createRequest("pvc-"+name, "localflix", name, 32<<20)); err != nil {
+			t.Fatalf("CreateVolume %s: %v", name, err)
+		}
 	}
 
 	state := &quotaState{pool: c.pool, dir: t.TempDir()}
 	if err := state.publish(ctx); err != nil {
-		t.Fatalf("publish: %v", err)
+		t.Fatalf("first publish: %v", err)
+	}
+	// Both must be published first, or a later absence proves nothing.
+	for _, name := range []string{"library", "comics"} {
+		if _, err := os.Stat(filepath.Join(state.dir, "localflix", name+".json")); err != nil {
+			t.Fatalf("%s was not published to begin with: %v", name, err)
+		}
 	}
 
-	if entries, err := os.ReadDir(state.dir); err == nil && len(entries) != 0 {
-		t.Errorf("published state for deleted volumes: %v", entries)
+	if _, err := c.DeleteVolume(ctx, deleteRequest("localflix/library")); err != nil {
+		t.Fatalf("DeleteVolume: %v", err)
+	}
+	if err := state.publish(ctx); err != nil {
+		t.Fatalf("second publish: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(state.dir, "localflix", "library.json")); !os.IsNotExist(err) {
+		t.Errorf("state for the deleted volume survived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state.dir, "localflix", "comics.json")); err != nil {
+		t.Errorf("the surviving volume lost its state: %v", err)
 	}
 }

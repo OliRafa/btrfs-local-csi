@@ -57,6 +57,8 @@ func (q *quotaState) publish(ctx context.Context) error {
 		return fmt.Errorf("read pool %q: %w", q.pool, err)
 	}
 
+	live := make(map[string]bool)
+
 	for _, namespace := range namespaces {
 		// Dot-prefixed entries cannot be namespaces, so nothing here is ours.
 		if !namespace.IsDir() || strings.HasPrefix(namespace.Name(), ".") {
@@ -79,6 +81,11 @@ func (q *quotaState) publish(ctx context.Context) error {
 			if _, err := readClaim(path); err != nil {
 				continue
 			}
+			// Marked live on existence, not on a successful read: a transient
+			// btrfs error must not make the volume look deleted and get its
+			// state pruned out from under a running pod.
+			live[namespace.Name()+"/"+volume.Name()] = true
+
 			usage, err := btrfs.QuotaUsage(ctx, path)
 			if err != nil {
 				slog.Warn("could not read quota", "path", path, "err", err)
@@ -88,6 +95,51 @@ func (q *quotaState) publish(ctx context.Context) error {
 				slog.Warn("could not write quota state", "path", path, "err", err)
 			}
 		}
+	}
+
+	return q.prune(live)
+}
+
+// prune drops state for volumes that no longer exist. Without it a deleted
+// volume's numbers are served forever, and the interposer has no way to tell
+// them apart from current ones: a pod still pointed at a removed volume would
+// read its last known figures rather than falling back to the real filesystem,
+// and if that volume had been full it would be told it has nothing free.
+func (q *quotaState) prune(live map[string]bool) error {
+	namespaces, err := os.ReadDir(q.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read state directory %q: %w", q.dir, err)
+	}
+
+	for _, namespace := range namespaces {
+		if !namespace.IsDir() {
+			continue
+		}
+		dir := filepath.Join(q.dir, namespace.Name())
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			slog.Warn("could not read state directory", "dir", dir, "err", err)
+			continue
+		}
+
+		for _, entry := range entries {
+			name, isState := strings.CutSuffix(entry.Name(), ".json")
+			if !isState || live[namespace.Name()+"/"+name] {
+				continue
+			}
+			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+				slog.Warn("could not prune quota state", "path", filepath.Join(dir, entry.Name()), "err", err)
+				continue
+			}
+			slog.Info("pruned quota state for a volume that no longer exists",
+				"namespace", namespace.Name(), "volume", name)
+		}
+
+		// Fails harmlessly while anything is left, which is what we want.
+		_ = os.Remove(dir)
 	}
 	return nil
 }
